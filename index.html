@@ -1,98 +1,128 @@
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <title>RTA Report Generator</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-</head>
-<body>
+  </head>
+  <body>
     <h2>RTA Report Generator</h2>
     <p>Upload your Excel files to generate the report.</p>
     <form id="uploadForm">
-        <input type="file" id="fileInput" multiple>
-        <button type="button" onclick="processFiles()">Submit</button>
+      <input type="file" id="fileInput" multiple />
+      <button type="button" onclick="processFiles()">Submit</button>
     </form>
-    <a id="downloadLink" style="display:none">Download Results.xlsx</a>
+    <a id="downloadLink" style="display: none">Download Results</a>
 
     <script>
-        function processFiles() {
-            const files = document.getElementById('fileInput').files;
-            if (files.length === 0) {
-                alert("Please select at least one file.");
-                return;
-            }
-    
-            let results = [];
-            let journeyData = {};
-            
-            function parseFileName(filename) {
-                const match = filename.match(/JID(\d+)\s([A-Z]{3})\s(\d{1,2})\s(\d{4})/);
-                if (!match) return null;
-                const journeyId = match[1];
-                const dateStr = `${match[3].padStart(2, '0')}/${getMonthNumber(match[2])}/${match[4]}`;
-                return { journeyId, dateStr, filename };
-            }
-    
-            function getMonthNumber(monthStr) {
-                const months = { "JAN": "01", "FEB": "02", "MAR": "03", "APR": "04", "MAY": "05", "JUN": "06", "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12" };
-                return months[monthStr] || "00";
-            }
-            
-            function calculateAverage(values) {
-                return values.length > 0 ? (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2) : "N/A";
-            }
-    
-            let promises = Array.from(files).map(file => new Promise((resolve) => {
-                let reader = new FileReader();
-                reader.onload = function(event) {
-                    let data = new Uint8Array(event.target.result);
-                    let workbook = XLSX.read(data, { type: "array" });
-                    let sheet = workbook.Sheets[workbook.SheetNames[1]];
-                    if (!sheet) {
-                        console.warn("Sheet 2 not found in " + file.name);
-                        resolve();
-                        return;
-                    }
-    
-                    let jsonData = XLSX.utils.sheet_to_json(sheet, { header: "A", defval: null });
-                    let values_30_mins = [], values_main_avg = [];
-                    jsonData.forEach(row => {
-                        let time = row["E"], value = row["F"];
-                        if (time && value !== null) {
-                            if (time >= "13:45" && time <= "14:15") values_30_mins.push(value);
-                            if (time >= "14:15" && time <= "15:30") values_main_avg.push(value);
-                        }
-                    });
-                    let avg_30_mins = calculateAverage(values_30_mins);
-                    let avg_main = calculateAverage(values_main_avg);
-                    const fileInfo = parseFileName(file.name);
-                    if (fileInfo) {
-                        if (!journeyData[fileInfo.journeyId]) journeyData[fileInfo.journeyId] = [];
-                        journeyData[fileInfo.journeyId].push([fileInfo.filename, fileInfo.journeyId, fileInfo.dateStr, avg_30_mins, avg_main]);
-                    }
-                    resolve();
-                };
-                reader.readAsArrayBuffer(file);
-            }));
-            
-            Promise.all(promises).then(() => {
-                Object.keys(journeyData).sort((a, b) => a - b).forEach(jid => {
-                    results.push(["File Name", "Journey ID", "Date", "Avg Travel Time 1:45PM to 2:15PM", "Avg Travel Time 2:15PM to 3:30PM"]);
-                    journeyData[jid].sort((a, b) => a[2].localeCompare(b[2]));
-                    results.push(...journeyData[jid]);
-                    results.push(["", "Average travel time", calculateAverage(journeyData[jid].map(r => parseFloat(r[3]))), calculateAverage(journeyData[jid].map(r => parseFloat(r[4]))), ""]);
-                    results.push([""]); 
-                });
-                let wb = XLSX.utils.book_new();
-                let ws = XLSX.utils.aoa_to_sheet(results);
-                XLSX.utils.book_append_sheet(wb, ws, "Results");
-                let wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-                let blob = new Blob([wbout], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-                let link = document.getElementById("downloadLink");
-                link.href = URL.createObjectURL(blob);
-                link.download = "Results.xlsx";
-                link.style.display = "block";
-            });
+      function processFiles() {
+        const files = document.getElementById("fileInput").files;
+        if (files.length === 0) {
+          alert("Please select at least one file.");
+          return;
         }
+
+        let results = [];
+        let journeyData = {};
+
+        function calculateAverage(values) {
+          return values.length > 0
+            ? (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2)
+            : "N/A";
+        }
+
+        function customSort(a, b) {
+          let numA = a.match(/^\d+/);
+          let numB = b.match(/^\d+/);
+          if (numA && numB) {
+            return parseInt(numA[0]) - parseInt(numB[0]);
+          }
+          return a.localeCompare(b);
+        }
+
+        let promises = Array.from(files).map(
+          (file) =>
+            new Promise((resolve) => {
+              let reader = new FileReader();
+              reader.onload = function (event) {
+                let data = new Uint8Array(event.target.result);
+                let workbook = XLSX.read(data, { type: "array" });
+                let sheet = workbook.Sheets[workbook.SheetNames[1]];
+                if (!sheet) {
+                  console.warn("Sheet 2 not found in " + file.name);
+                  resolve();
+                  return;
+                }
+
+                let journeyIdCell = sheet["A10"];
+                let journeyId = journeyIdCell
+                  ? journeyIdCell.v.toString()
+                  : "Unknown";
+
+                let jsonData = XLSX.utils.sheet_to_json(sheet, {
+                  header: "A",
+                  defval: null,
+                });
+                let values_30_mins = [],
+                  values_main_avg = [];
+                jsonData.forEach((row) => {
+                  let time = row["E"],
+                    value = row["F"];
+                  if (time && value !== null) {
+                    if (time >= "13:43" && time <= "14:17")
+                      values_30_mins.push(value);
+                    if (time >= "14:18" && time <= "15:33")
+                      values_main_avg.push(value);
+                  }
+                });
+                let avg_30_mins = calculateAverage(values_30_mins);
+                let avg_main = calculateAverage(values_main_avg);
+
+                if (!journeyData[journeyId]) journeyData[journeyId] = [];
+                journeyData[journeyId].push([
+                  file.name.replace(/\.xlsx$/i, ""),
+                  journeyId,
+                  avg_30_mins,
+                  avg_main,
+                ]);
+                resolve();
+              };
+              reader.readAsArrayBuffer(file);
+            })
+        );
+
+        Promise.all(promises).then(() => {
+          Object.keys(journeyData)
+            .sort((a, b) => a - b)
+            .forEach((jid) => {
+              results.push([
+                "File Name",
+                "Journey ID",
+                "Avg Travel Time 1:45PM to 2:15PM",
+                "Avg Travel Time 2:15PM to 3:30PM",
+              ]);
+              journeyData[jid].sort((a, b) => customSort(a[0], b[0]));
+              results.push(...journeyData[jid]);
+              results.push([
+                "",
+                "Average travel time",
+                calculateAverage(journeyData[jid].map((r) => parseFloat(r[2]))),
+                calculateAverage(journeyData[jid].map((r) => parseFloat(r[3]))),
+              ]);
+              results.push([""]);
+            });
+          let wb = XLSX.utils.book_new();
+          let ws = XLSX.utils.aoa_to_sheet(results);
+          XLSX.utils.book_append_sheet(wb, ws, "Results");
+          let wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+          let blob = new Blob([wbout], {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          });
+          let link = document.getElementById("downloadLink");
+          link.href = URL.createObjectURL(blob);
+          link.download = "Results.xlsx";
+          link.style.display = "block";
+        });
+      }
     </script>
-</body>
+  </body>
 </html>
